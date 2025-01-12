@@ -5,6 +5,7 @@ import ecdsa
 from base58 import b58encode, b58decode
 import os
 import qrcode_terminal
+import secrets
 
 
 def generate_entropy(bits=256):
@@ -46,27 +47,30 @@ def private_to_public(private_key):
     vk = sk.verifying_key
     return b"\x04" + vk.to_string()  # Prefix 0x04 indicates uncompressed key
 
+
 def public_key_to_address(public_key):
     """Convert a public key to a Bitcoin address."""
     # Step 1: Perform SHA-256 hashing on the public key
     sha256_hash = hashlib.sha256(public_key).digest()
-    
+
     # Step 2: Perform RIPEMD-160 hashing on the result
     ripemd160_hash = hashlib.new("ripemd160", sha256_hash).digest()
-    
+
     # Step 3: Add version byte (0x00 for mainnet Bitcoin)
     versioned_payload = b"\x00" + ripemd160_hash
-    
+
     # Step 4: Create checksum (first 4 bytes of double SHA-256)
     checksum = hashlib.sha256(hashlib.sha256(versioned_payload).digest()).digest()[:4]
-    
+
     # Step 5: Append checksum to payload
     full_payload = versioned_payload + checksum
-    
+
     # Step 6: Encode in Base58
     return b58encode(full_payload).decode()
 
+
 def validate_bitcoin_address(address):
+    """Validate the checksum of a Bitcoin address."""
     try:
         decoded = b58decode(address)
         if len(decoded) != 25:
@@ -77,35 +81,61 @@ def validate_bitcoin_address(address):
     except ValueError:
         return False
 
+
+def secure_erase(variable):
+    """Overwrite a variable with random bytes before deleting it."""
+    if isinstance(variable, bytes):
+        overwritten = secrets.token_bytes(len(variable))
+    elif isinstance(variable, str):
+        overwritten = ''.join(chr(secrets.randbelow(256)) for _ in range(len(variable)))
+    variable = overwritten  # Overwrite in memory
+    del variable  # Delete reference
+
+
 # Step 1: Generate Mnemonic and Validate
 mnemo = Mnemonic("english")
 entropy = generate_entropy(256)
 mnemonic = mnemo.to_mnemonic(entropy)
-validate_mnemonic(mnemonic)
-print("Mnemonic:", mnemonic)
 
-# Step 2: Convert Mnemonic to Seed
+print("\n==== Your Mnemonic Phrase ====")
+print(mnemonic)
+print("\nWrite this down and store it safely. You will be asked to re-enter it to verify.")
+print("================================\n")
+
+# Step 2: User Confirmation (Re-enter Mnemonic)
+user_mnemonic = input("Re-enter your mnemonic phrase to confirm: ").strip()
+if user_mnemonic != mnemonic:
+    print("\nError: Mnemonic does not match! Restart the process and ensure you write it down correctly.")
+    exit(1)
+
+print("\nMnemonic successfully verified!\n")
+
+# Step 3: Convert Mnemonic to Seed
 passphrase = input("Enter an optional passphrase (press Enter to skip): ")
 seed = mnemo.to_seed(mnemonic, passphrase=passphrase.strip())
 
-# Step 3: Derive Master Private Key and Chain Code
+# Step 4: Derive Master Private Key and Chain Code
 master_private_key, master_chain_code = derive_master_keys(seed)
-print("Master Private Key (hex):", hexlify(master_private_key).decode())
 
-# Step 4: Derive First Hardened Child Key
+# Step 5: Derive First Hardened Child Key (No printing of private keys)
 child_private_key, child_chain_code = derive_child_key(master_private_key, master_chain_code, index=0)
-print("Child Private Key (hex):", hexlify(child_private_key).decode())
 
-# Step 5: Generate Public Key and Bitcoin Address
+# Step 6: Generate Public Key and Bitcoin Address
 public_key = private_to_public(child_private_key)
 bitcoin_address = public_key_to_address(public_key)
 
 if validate_bitcoin_address(bitcoin_address):
-    print("Bitcoin Address:", bitcoin_address, "\n")
+    print("\n==== Your Bitcoin Address ====")
+    print(bitcoin_address)
+    print("\n================================\n")
     qrcode_terminal.draw(bitcoin_address)
 else:
     print("Failed - Invalid address")
 
-# Securely clear sensitive data
-del entropy, mnemonic, seed, master_private_key, master_chain_code, child_private_key
-
+# Step 7: Securely Erase Sensitive Data
+secure_erase(entropy)
+secure_erase(mnemonic)
+secure_erase(seed)
+secure_erase(master_private_key)
+secure_erase(master_chain_code)
+secure_erase(child_private_key)
